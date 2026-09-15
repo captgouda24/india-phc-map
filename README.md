@@ -12,6 +12,7 @@ The data comes from the Ministry of Health & Family Welfare's [All India Health 
   - Duplicate "Andhra Pradesh Old" rows are dropped.
   - Swapped latitude/longitude is corrected.
   - The 50 PHCs without usable coordinates are omitted.
+  - Facilities the general public cannot use are flagged `restricted` and hidden: CGHS and ESI dispensaries, police, jail and armed-forces dispensaries, railway hospitals, and dispensaries inside high court or secretariat complexes. Their rows stay in the data so map IDs don't change.
 - **Map IDs:** in `data/phc.js`, a PHC's map ID is its row index. Personal links depend on these IDs, so never reorder or delete rows; only append.
 
 ## Personal links

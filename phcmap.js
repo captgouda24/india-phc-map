@@ -1,5 +1,7 @@
 /* India PHC map: shared code for the public site (index.html) and the private admin page.
-   Data comes from window.PHC_DATA (data/phc.js). A PHC's map ID is its row index there. */
+   Data comes from window.PHC_DATA (data/phc.js). A PHC's map ID is its row index there.
+   Rows flagged restricted (not open to the general public, e.g. CGHS, ESI, police, jail) stay in the
+   data so IDs never shift, but are hidden from the map, search and personal links. */
 (function () {
   "use strict";
 
@@ -7,6 +9,7 @@
   const PHC = D.rows.map((r, id) => ({
     id, name: r[0], state: D.states[r[1]], district: D.districts[r[2]], subdistrict: D.subdistricts[r[3]],
     address: r[4], lat: r[5], lon: r[6], urban: r[7] === 1, nin: r[8], pin: D.pins[r[9]], approx: r[9] >= 2,
+    restricted: r[10] === 1,
   }));
 
   const INDIA_BOUNDS = [[6.5, 68], [37.5, 97.5]];
@@ -107,7 +110,7 @@
 
   function filterPredicate() {
     const st = $("f-state").value, rural = $("f-rural").checked, urban = $("f-urban").checked, hideApprox = $("f-approx").checked;
-    return p => (!st || p.state === st) && (p.urban ? urban : rural) && !(hideApprox && p.approx);
+    return p => !p.restricted && (!st || p.state === st) && (p.urban ? urban : rural) && !(hideApprox && p.approx);
   }
 
   function filterKey() {
@@ -124,7 +127,7 @@
 
   function fitState(ctx, state) {
     if (!state) return ctx.map.fitBounds(INDIA_BOUNDS);
-    const pts = PHC.filter(p => p.state === state).map(p => [p.lat, p.lon]);
+    const pts = PHC.filter(p => p.state === state && !p.restricted).map(p => [p.lat, p.lon]);
     if (pts.length) ctx.map.fitBounds(L.latLngBounds(pts), { padding: [20, 20] });
   }
 
@@ -142,7 +145,7 @@
     ];
     return `<div class="pop">${top || ""}
       <h3>${esc(p.name)}</h3>
-      <div class="badges"><span class="badge ${p.urban ? "b-urban" : "b-rural"}">${p.urban ? "Urban" : "Rural"} PHC</span>${p.approx ? '<span class="badge b-approx">Approximate pin</span>' : ""}</div>
+      <div class="badges"><span class="badge ${p.urban ? "b-urban" : "b-rural"}">${p.urban ? "Urban" : "Rural"} PHC</span>${p.approx ? '<span class="badge b-approx">Approximate pin</span>' : ""}${p.restricted ? '<span class="badge b-approx">Not open to the public</span>' : ""}</div>
       <table>${rows.map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join("")}</table>
       ${p.approx ? '<p class="hint">This pin may mark a village or block centre, or a nearby facility. Search by name to find the building; also try "Ayushman Arogya Mandir" and the village name.</p>' : ""}
       <div class="links"><a href="${gmapsPin(p)}" target="_blank" rel="noopener">Pin in Google Maps</a><a href="${gmapsDir(p)}" target="_blank" rel="noopener">Directions</a><a href="${gmapsName(p)}" target="_blank" rel="noopener">Search by name</a></div>
@@ -174,10 +177,10 @@
       if (q.length < 2) return;
       const hits = [];
       const idMatch = q.match(/^#?(\d+)$/);
-      if (idMatch && PHC[+idMatch[1]]) hits.push(PHC[+idMatch[1]]);
+      if (idMatch && PHC[+idMatch[1]] && !PHC[+idMatch[1]].restricted) hits.push(PHC[+idMatch[1]]);
       const terms = q.split(/\s+/);
       for (let i = 0; i < PHC.length && hits.length < 25; i++) {
-        if (terms.every(t => hay[i].includes(t))) hits.push(PHC[i]);
+        if (!PHC[i].restricted && terms.every(t => hay[i].includes(t))) hits.push(PHC[i]);
       }
       if (!hits.length) {
         results.innerHTML = '<li class="none">No matches</li>';
@@ -218,7 +221,7 @@
       if (!label) continue;
       for (const t of ids) {
         const id = parseInt(t, 36);
-        if (/^[0-9a-z]+$/.test(t) && PHC[id]) out.push({ id, label, order: out.length + 1 });
+        if (/^[0-9a-z]+$/.test(t) && PHC[id] && !PHC[id].restricted) out.push({ id, label, order: out.length + 1 });
       }
     }
     return out;
