@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>India PHC Map</title>
+<meta name="description" content="Interactive map of India's Primary Health Centres (MoHFW directory, 2016).">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css">
+<link rel="stylesheet" href="phcmap.css">
+</head>
+<body>
+<div id="app">
+  <aside id="panel">
+    <header>
+      <h1>India PHC Map</h1>
+      <button id="about-btn" class="linkbtn" type="button">About the data</button>
+    </header>
+
+    <section id="mine" hidden>
+      <h2>Your assigned sites <span id="mine-count"></span></h2>
+      <ul id="mine-list" class="sitelist"></ul>
+      <div id="mine-routes" class="routes"></div>
+      <label class="chk"><input type="checkbox" id="only-mine"> Show only my sites</label>
+    </section>
+
+    <section>
+      <input id="search" type="search" placeholder="Search PHC, sub-district, district, state…" autocomplete="off">
+      <ul id="results" class="results"></ul>
+    </section>
+
+    <section class="filters">
+      <select id="f-state"><option value="">All states</option></select>
+      <label class="chk"><input type="checkbox" id="f-rural" checked> Rural</label>
+      <label class="chk"><input type="checkbox" id="f-urban" checked> Urban</label>
+      <label class="chk"><input type="checkbox" id="f-approx"> Hide approximate pins</label>
+      <p class="count"><span id="count">…</span> PHCs shown</p>
+    </section>
+
+    <section class="legend">
+      <div><i class="phc-dot phc-rural"></i> Rural PHC</div>
+      <div><i class="phc-dot phc-urban"></i> Urban PHC</div>
+      <div><i class="phc-dot phc-rural phc-approx"></i> Approximate pin</div>
+      <div><span class="num pin-nearby">1</span> Nearby <span class="num pin-cluster-a">1</span> Cluster A <span class="num pin-cluster-b">1</span> Cluster B</div>
+    </section>
+  </aside>
+  <div id="map"></div>
+</div>
+
+<dialog id="about">
+  <h2>About this map</h2>
+  <p>Each dot is a Primary Health Centre from the Ministry of Health &amp; Family Welfare's
+    <a href="https://www.data.gov.in/catalog/all-india-health-centres-directory" target="_blank" rel="noopener">All India Health Centres Directory</a>
+    (as of 7 October 2016): 28,110 PHCs with usable coordinates.</p>
+  <ul>
+    <li><b>The data is from 2016.</b> Some PHCs have since been renamed Ayushman Arogya Mandirs, upgraded, or closed, and newer ones are missing.</li>
+    <li><b>Some pins are approximate</b> (orange ring). They may mark a village or block centre, or a nearby facility. Search by name to find the building.</li>
+    <li>District names are as of 2016. Many districts have since been split.</li>
+    <li>Cleaning: duplicate "Andhra Pradesh Old" rows removed; swapped latitude/longitude corrected.</li>
+    <li>Use the layer button (top right) to switch between street and satellite maps. Basemap tiles © Esri and its data partners; boundaries are not authenticated by the Survey of India.</li>
+  </ul>
+  <p>If you received a personal link, it highlights your assigned sites. Please don't share it. This site stores no personal information.</p>
+  <div class="row"><button id="about-close" type="button">Close</button></div>
+</dialog>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
+<script src="data/phc.js"></script>
+<script src="phcmap.js"></script>
+<script>
+(function () {
+  "use strict";
+  const M = PHCMap, $ = M.$;
+  const ctx = M.createMap("map");
+  const mine = location.hash.startsWith("#a=") ? M.decodeAssign(location.hash.slice(3)) : [];
+  const mineById = new Map(mine.map(it => [it.id, it]));
+
+  function mineTag(id) {
+    const it = mineById.get(id);
+    return it ? `<div class="mine-tag">Your site #${it.order} · ${M.esc(it.label)}</div>` : "";
+  }
+  const showPhc = id => M.openPopup(ctx, id, mineTag(id));
+
+  M.buildMarkers(ctx, showPhc);
+  M.fillStates($("f-state"));
+
+  function refresh() {
+    const onlyMine = mine.length > 0 && $("only-mine").checked;
+    let n = 0;
+    if (onlyMine) ctx.cluster.clearLayers();
+    else n = M.refreshCluster(ctx, M.filterPredicate(), new Set(mineById.keys()));
+    $("count").textContent = (n + mine.length).toLocaleString("en-IN");
+  }
+  ["f-rural", "f-urban", "f-approx", "only-mine"].forEach(id => $(id).addEventListener("change", refresh));
+  $("f-state").addEventListener("change", () => { refresh(); M.fitState(ctx, $("f-state").value); });
+  M.setupSearch($("search"), $("results"), id => { M.flyTo(ctx, id, 15); showPhc(id); });
+
+  if (mine.length) {
+    $("mine").hidden = false;
+    $("mine-count").textContent = `(${mine.length})`;
+    const list = $("mine-list");
+    for (const g of M.groupByLabel(mine)) {
+      const head = document.createElement("li");
+      head.className = "grp";
+      head.textContent = g.label;
+      list.appendChild(head);
+      for (const it of g.items) {
+        const p = M.PHC[it.id];
+        L.marker([p.lat, p.lon], { icon: M.numberIcon(it.order, it.label), zIndexOffset: 1000 })
+          .on("click", () => showPhc(it.id)).addTo(ctx.highlight);
+        const li = document.createElement("li");
+        li.innerHTML = `<button class="site" type="button"><span class="num pin-${M.slug(it.label)}">${it.order}</span>` +
+          `<span><b>${M.esc(p.name)}</b><small>${M.esc(p.subdistrict)}, ${M.esc(p.district)}</small></span></button>`;
+        li.querySelector("button").addEventListener("click", () => { M.flyTo(ctx, it.id, 14); showPhc(it.id); });
+        list.appendChild(li);
+      }
+    }
+    $("mine-routes").innerHTML = "<h3>Directions from your location</h3>" +
+      M.routeLinks(mine).map(r => `<a href="${r.url}" target="_blank" rel="noopener">${M.esc(r.label)}</a>`).join("");
+    ctx.map.fitBounds(L.latLngBounds(mine.map(it => [M.PHC[it.id].lat, M.PHC[it.id].lon])), { padding: [40, 40], maxZoom: 13 });
+  }
+  refresh();
+
+  window.addEventListener("hashchange", () => location.reload());
+  $("about-btn").addEventListener("click", () => $("about").showModal());
+  $("about-close").addEventListener("click", () => $("about").close());
+})();
+</script>
+</body>
+</html>
