@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PHC Visits: North India</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css">
+<link rel="stylesheet" href="phcmap.css">
+<style>
+  .pin-main { background: var(--accent); }
+  .pin-reserve { background: #8a94a3; }
+  .rules { margin: 0; padding-left: 18px; }
+  .rules li { margin: 4px 0; }
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="panel">
+    <header>
+      <h1>PHC visits: North India</h1>
+      <p class="muted" id="subtitle"></p>
+    </header>
+
+    <section>
+      <h2>How to use this list</h2>
+      <ul class="rules">
+        <li>Work down each state's list <b>in order</b>.</li>
+        <li>Use a <b>reserve</b> site only when a main site gets no visit at all.</li>
+        <li>A closed, renamed or missing PHC is a result: record it, don't replace it.</li>
+      </ul>
+    </section>
+
+    <section class="filters">
+      <select id="c-state"><option value="">All states</option></select>
+      <label class="chk"><input type="checkbox" id="c-reserve"> Show reserve sites</label>
+      <p class="count"><span id="count">…</span> sites shown</p>
+    </section>
+
+    <section>
+      <ul id="list" class="sitelist"></ul>
+    </section>
+
+    <section class="legend">
+      <div><span class="num pin-main">1</span> Main list <span class="num pin-reserve">1</span> Reserve</div>
+      <p class="hint">Numbers are the visit order within each state. Locations come from the 2016 government directory, and some pins are approximate: search by name to find the building.</p>
+    </section>
+  </aside>
+  <div id="map"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
+<script src="data/phc.js"></script>
+<script src="data/campaign.js"></script>
+<script src="phcmap.js"></script>
+<script>
+(function () {
+  "use strict";
+  const M = PHCMap, $ = M.$, C = window.CAMPAIGN;
+  const ctx = M.createMap("map");
+  const sites = C.sites.map(s => ({ ...s, p: M.PHC[s.id] })).filter(s => s.p && !s.p.restricted);
+  const states = [...new Set(sites.map(s => s.state))];
+  states.forEach(s => $("c-state").add(new Option(s, s)));
+  const nMain = sites.filter(s => s.list === "Main").length;
+  $("subtitle").textContent = `${nMain} Primary Health Centres to visit, plus ${sites.length - nMain} reserves, ` +
+    `across ${states.join(", ")}. Randomly drawn ${C.drawn}.`;
+
+  const kind = s => (s.list === "Main" ? "main" : "reserve");
+  const tag = s => `<div class="mine-tag">${M.esc(s.state)} #${s.order} · ${s.list === "Main" ? "Main list" : "Reserve"}</div>`;
+  const show = s => M.openPopup(ctx, s.id, tag(s));
+  const markers = new Map(sites.map(s => [s, L.marker([s.p.lat, s.p.lon], {
+    icon: M.numberIcon(s.order, kind(s)), zIndexOffset: s.list === "Main" ? 1000 : 0,
+  }).on("click", () => show(s))]));
+
+  function render(fit) {
+    const st = $("c-state").value, withReserve = $("c-reserve").checked;
+    const shown = sites.filter(s => (!st || s.state === st) && (withReserve || s.list === "Main"));
+    ctx.highlight.clearLayers();
+    shown.forEach(s => markers.get(s).addTo(ctx.highlight));
+    $("count").textContent = shown.length;
+
+    const ul = $("list");
+    ul.innerHTML = "";
+    for (const state of states) {
+      const group = shown.filter(s => s.state === state);
+      if (!group.length) continue;
+      const head = document.createElement("li");
+      head.className = "grp";
+      head.textContent = `${state} (${group.length})`;
+      ul.appendChild(head);
+      for (const s of group) {
+        const li = document.createElement("li");
+        li.innerHTML = `<button class="site" type="button"><span class="num pin-${kind(s)}">${s.order}</span>` +
+          `<span><b>${M.esc(s.p.name)}</b><small>${M.esc(s.p.subdistrict)}, ${M.esc(s.p.district)}${s.list === "Main" ? "" : " · reserve"}</small></span></button>`;
+        li.querySelector("button").addEventListener("click", () => { M.flyTo(ctx, s.id, 12); show(s); });
+        ul.appendChild(li);
+      }
+    }
+    if (fit && shown.length) ctx.map.fitBounds(L.latLngBounds(shown.map(s => [s.p.lat, s.p.lon])), { padding: [30, 30] });
+  }
+
+  $("c-state").addEventListener("change", () => render(true));
+  $("c-reserve").addEventListener("change", () => render(false));
+  render(true);
+})();
+</script>
+</body>
+</html>
