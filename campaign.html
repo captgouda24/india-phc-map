@@ -9,10 +9,17 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css">
 <link rel="stylesheet" href="phcmap.css">
 <style>
-  .pin-main { background: var(--accent); }
-  .pin-reserve { background: #8a94a3; }
+  .pin-confirmed { background: var(--accent); }
+  .pin-place-only { background: #b7791f; }
+  .pin-not-found { background: #b3261e; }
   .rules { margin: 0; padding-left: 18px; }
   .rules li { margin: 4px 0; }
+  .cl-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin: 12px 0 4px; }
+  .cl-head b { font-size: 13px; }
+  .cl-head a { font-size: 12px; color: var(--accent); white-space: nowrap; }
+  .chk-tag { font-size: 11px; font-weight: 600; }
+  .t-confirmed { color: var(--accent); } .t-place-only { color: #b7791f; } .t-not-found { color: #b3261e; }
+  .warn-pin { display: block; color: #b3261e; font-size: 12px; }
 </style>
 </head>
 <body>
@@ -26,16 +33,15 @@
     <section>
       <h2>How to use this list</h2>
       <ul class="rules">
-        <li>Work down each state's list <b>in order</b>.</li>
-        <li>Use a <b>reserve</b> site only when a main site gets no visit at all.</li>
-        <li>A closed, renamed or missing PHC is a result: record it, don't replace it.</li>
+        <li>Each <b>cluster</b> is 3 nearby PHCs: visit all three in one trip. "Open route" gives driving directions through them.</li>
+        <li>A closed, renamed or upgraded PHC is a result: record it, don't replace it.</li>
+        <li>Sites marked <span class="t-not-found"><b>pin may be wrong</b></span>: find them by name and block, not by the map pin.</li>
       </ul>
     </section>
 
     <section class="filters">
       <select id="c-state"><option value="">All states</option></select>
-      <label class="chk"><input type="checkbox" id="c-reserve"> Show reserve sites</label>
-      <p class="count"><span id="count">…</span> sites shown</p>
+      <p class="count"><span id="count">…</span></p>
     </section>
 
     <section>
@@ -43,8 +49,8 @@
     </section>
 
     <section class="legend">
-      <div><span class="num pin-main">1</span> Main list <span class="num pin-reserve">1</span> Reserve</div>
-      <p class="hint">Numbers are the visit order within each state. Locations come from the 2016 government directory, and some pins are approximate: search by name to find the building.</p>
+      <div><span class="num pin-confirmed">6</span> Confirmed online <span class="num pin-place-only">6</span> Place found <span class="num pin-not-found">6</span> Not found online</div>
+      <p class="hint">Pin numbers are the cluster number. Each site was searched online in September 2026; "place found" means the village exists but we found nothing specific about the PHC, which is common for small rural facilities. Locations come from the 2016 government directory.</p>
     </section>
   </aside>
   <div id="map"></div>
@@ -58,51 +64,56 @@
 <script>
 (function () {
   "use strict";
-  const M = PHCMap, $ = M.$, C = window.CAMPAIGN;
+  const M = PHCMap, $ = M.$, C = window.CAMPAIGN, esc = M.esc;
   const ctx = M.createMap("map");
-  const sites = C.sites.map(s => ({ ...s, p: M.PHC[s.id] })).filter(s => s.p && !s.p.restricted);
-  const states = [...new Set(sites.map(s => s.state))];
+  const clusters = C.clusters.map(c => ({ ...c, sites: c.sites.map(s => ({ ...s, p: M.PHC[s.id] })).filter(s => s.p) }));
+  const states = [...new Set(clusters.map(c => c.state))];
   states.forEach(s => $("c-state").add(new Option(s, s)));
-  const nMain = sites.filter(s => s.list === "Main").length;
-  $("subtitle").textContent = `${nMain} Primary Health Centres to visit, plus ${sites.length - nMain} reserves, ` +
-    `across ${states.join(", ")}. Randomly drawn ${C.drawn}.`;
+  const nSites = clusters.reduce((n, c) => n + c.sites.length, 0);
+  $("subtitle").textContent = `${nSites} Primary Health Centres in ${clusters.length} clusters of 3, across ${states.join(", ")}. ` +
+    `Randomly drawn ${C.drawn}; each site checked online.`;
 
-  const kind = s => (s.list === "Main" ? "main" : "reserve");
-  const tag = s => `<div class="mine-tag">${M.esc(s.state)} #${s.order} · ${s.list === "Main" ? "Main list" : "Reserve"}</div>`;
-  const show = s => M.openPopup(ctx, s.id, tag(s));
-  const markers = new Map(sites.map(s => [s, L.marker([s.p.lat, s.p.lon], {
-    icon: M.numberIcon(s.order, kind(s)), zIndexOffset: s.list === "Main" ? 1000 : 0,
-  }).on("click", () => show(s))]));
+  const cls = s => M.slug(s.check || "place only");
+  const num = c => String(parseInt(c.id.slice(1), 10));
+  const tag = (c, s) => `<div class="mine-tag">${esc(c.id)} · site ${s.order} of ${c.sites.length} · ${esc(s.check)}</div>` +
+    (s.pin ? `<p class="hint" style="color:#b3261e">Pin may be wrong (${esc(s.pin)}). Find this PHC by name and block.</p>` : "") +
+    (s.note ? `<p class="hint">${esc(s.note)}</p>` : "");
+  const show = (c, s) => M.openPopup(ctx, s.id, tag(c, s));
+  const markers = [];
+  clusters.forEach(c => c.sites.forEach(s => markers.push({ c, s,
+    m: L.marker([s.p.lat, s.p.lon], { icon: M.numberIcon(num(c), s.check || "place only") }).on("click", () => show(c, s)) })));
+
+  function route(c) {
+    const pts = c.sites.map(s => `${s.p.lat},${s.p.lon}`);
+    return `https://www.google.com/maps/dir/?api=1&travelmode=driving&destination=${pts[pts.length - 1]}` +
+      (pts.length > 1 ? "&waypoints=" + pts.slice(0, -1).join("%7C") : "");
+  }
 
   function render(fit) {
-    const st = $("c-state").value, withReserve = $("c-reserve").checked;
-    const shown = sites.filter(s => (!st || s.state === st) && (withReserve || s.list === "Main"));
+    const st = $("c-state").value;
+    const shown = clusters.filter(c => !st || c.state === st);
     ctx.highlight.clearLayers();
-    shown.forEach(s => markers.get(s).addTo(ctx.highlight));
-    $("count").textContent = shown.length;
-
+    markers.filter(x => shown.includes(x.c)).forEach(x => x.m.addTo(ctx.highlight));
+    $("count").textContent = `${shown.length} clusters · ${shown.reduce((n, c) => n + c.sites.length, 0)} sites shown`;
     const ul = $("list");
     ul.innerHTML = "";
-    for (const state of states) {
-      const group = shown.filter(s => s.state === state);
-      if (!group.length) continue;
+    for (const c of shown) {
       const head = document.createElement("li");
-      head.className = "grp";
-      head.textContent = `${state} (${group.length})`;
+      head.innerHTML = `<div class="cl-head"><b>${esc(c.id)} · ${esc(c.district)}, ${esc(c.state)}</b><a href="${route(c)}" target="_blank" rel="noopener">Open route</a></div>`;
       ul.appendChild(head);
-      for (const s of group) {
+      for (const s of c.sites) {
         const li = document.createElement("li");
-        li.innerHTML = `<button class="site" type="button"><span class="num pin-${kind(s)}">${s.order}</span>` +
-          `<span><b>${M.esc(s.p.name)}</b><small>${M.esc(s.p.subdistrict)}, ${M.esc(s.p.district)}${s.list === "Main" ? "" : " · reserve"}</small></span></button>`;
-        li.querySelector("button").addEventListener("click", () => { M.flyTo(ctx, s.id, 12); show(s); });
+        li.innerHTML = `<button class="site" type="button"><span class="num pin-${cls(s)}">${s.order}</span>` +
+          `<span><b>${esc(s.p.name)}</b><small>${esc(s.p.subdistrict)}, ${esc(s.p.district)} · <span class="chk-tag t-${cls(s)}">${esc(s.check)}</span></small>` +
+          (s.pin ? `<span class="warn-pin">Pin may be wrong: find by name</span>` : "") + `</span></button>`;
+        li.querySelector("button").addEventListener("click", () => { M.flyTo(ctx, s.id, 12); show(c, s); });
         ul.appendChild(li);
       }
     }
-    if (fit && shown.length) ctx.map.fitBounds(L.latLngBounds(shown.map(s => [s.p.lat, s.p.lon])), { padding: [30, 30] });
+    const pts = shown.flatMap(c => c.sites.map(s => [s.p.lat, s.p.lon]));
+    if (fit && pts.length) ctx.map.fitBounds(L.latLngBounds(pts), { padding: [30, 30] });
   }
-
   $("c-state").addEventListener("change", () => render(true));
-  $("c-reserve").addEventListener("change", () => render(false));
   render(true);
 })();
 </script>
